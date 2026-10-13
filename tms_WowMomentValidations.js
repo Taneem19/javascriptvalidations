@@ -78,14 +78,46 @@ function controlShopState(executionContext)
     var shopControl =
         formContext.getControl("tms_shop");
 
+    // Always clear selected shop when Occasion changes
+    shopAttribute.setValue(null);
+
     if (!occasion)
     {
-        shopAttribute.setValue(null);
-
         shopControl.setDisabled(true);
     }
     else
     {
         shopControl.setDisabled(false);
+    }
+}
+
+// Validation 4 - Validate Spouse Name
+function manageSpouseName(executionContext)
+{
+    var formContext = executionContext.getFormContext();
+
+    var occasion =
+        formContext.getAttribute("tms_occasion")
+                   .getValue();
+
+    var spouseAttribute =
+        formContext.getAttribute("tms_spousename");
+
+    var spouseControl =
+        formContext.getControl("tms_spousename");
+
+    if (occasion === 3)
+    {
+        spouseControl.setVisible(true);
+
+        spouseAttribute.setRequiredLevel("required");
+    }
+    else
+    {
+        spouseAttribute.setValue(null);
+
+        spouseAttribute.setRequiredLevel("none");
+
+        spouseControl.setVisible(false);
     }
 }
