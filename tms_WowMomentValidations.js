@@ -28,88 +28,47 @@ function validateEmailDomain(executionContext)
     }
 }
 
-// Validation 2 - Shopfilter
-function registerShopFilter(executionContext)
-{
+// Validation 2 - Shop filter (attach once on form load)
+function registerShopFilter(executionContext) {
     var formContext = executionContext.getFormContext();
-
+ 
     var shopControl = formContext.getControl("tms_shop");
-
-    shopControl.addPreSearch(function ()
-    {
+ 
+    shopControl.addPreSearch(function () {
         applyShopFilter(formContext);
     });
 }
-
-function applyShopFilter(formContext)
-{
-    var occasion =
-        formContext.getAttribute("tms_occasion")
-                   .getValue();
-
-    if (!occasion)
-    {
+ 
+function applyShopFilter(formContext) {
+    var occasion = formContext.getAttribute("tms_occasion").getValue();
+ 
+    if (!occasion) {
         return;
     }
-
+ 
     var filterXml =
         "<filter type='and'>" +
-            "<condition attribute='tms_eventsorganizedhere'" +
-            " operator='eq'" +
-            " value='" + occasion + "' />" +
+        "<condition attribute='tms_eventsorganizedhere'" +
+        " operator='eq'" +
+        " value='" + occasion + "' />" +
         "</filter>";
-
-    formContext
-        .getControl("tms_shop")
-        .addCustomFilter(filterXml);
+ 
+    formContext.getControl("tms_shop").addCustomFilter(filterXml);
 }
-
-// Validation 3 - Control Shop State
-function controlShopState(executionContext)
-{
+ 
+// Validation 3 - Control Shop state (locks/unlocks and clears Shop based on Occasion)
+// Register this on BOTH Form On Load and Occasion's On Change.
+function occasionChanged(executionContext) {
     var formContext = executionContext.getFormContext();
-
-    var occasion =
-        formContext.getAttribute("tms_occasion").getValue();
-
-    var shopAttribute =
-        formContext.getAttribute("tms_shop");
-
-    var shopControl =
-        formContext.getControl("tms_shop");
-
-
-    if (!occasion)
-    {
+ 
+    var occasion = formContext.getAttribute("tms_occasion").getValue();
+    var shopAttribute = formContext.getAttribute("tms_shop");
+    var shopControl = formContext.getControl("tms_shop");
+ 
+    if (!occasion) {
+        shopAttribute.setValue(null);
         shopControl.setDisabled(true);
-    }
-    else
-    {
-        shopControl.setDisabled(false);
-    }
-}
-
-function occasionChanged(executionContext)
-{
-    var formContext = executionContext.getFormContext();
-
-    var occasion =
-        formContext.getAttribute("tms_occasion").getValue();
-
-    var shopAttribute =
-        formContext.getAttribute("tms_shop");
-
-    var shopControl =
-        formContext.getControl("tms_shop");
-
-    shopAttribute.setValue(null);
-
-    if (!occasion)
-    {
-        shopControl.setDisabled(true);
-    }
-    else
-    {
+    } else {
         shopControl.setDisabled(false);
     }
 }

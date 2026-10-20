@@ -205,117 +205,6 @@ function updateLinkedContact(executionContext)
     );
 }
 
-// Web API 4B - Validate duplicate wow moment
-var _tmsWowBypass = false;
-
-// false = duplicate if same date AND time (to the minute)
-// true  = duplicate if same calendar day (any time)
-var TMS_MATCH_WHOLE_DAY = false;
-
-function tmsPad(n) {
-    return ("0" + n).slice(-2);
-}
-
-// Formats a UTC-based Date as a literal "Z" string (no time zone shift)
-function tmsToLiteral(d) {
-    return d.getUTCFullYear() + "-" + tmsPad(d.getUTCMonth() + 1) + "-" +
-           tmsPad(d.getUTCDate()) + "T" + tmsPad(d.getUTCHours()) + ":" +
-           tmsPad(d.getUTCMinutes()) + ":" + tmsPad(d.getUTCSeconds()) + "Z";
-}
-
-function validateDuplicateWowMoment(executionContext) {
-
-    // Second pass (our own re-save): let it through
-    if (_tmsWowBypass) {
-        _tmsWowBypass = false;
-        return;
-    }
-
-    var formContext = executionContext.getFormContext();
-    var eventArgs = executionContext.getEventArgs();
-
-    var emailAttr = formContext.getAttribute("tms_emailaddress");
-    var occasionAttr = formContext.getAttribute("tms_occasion");
-    var dateAttr = formContext.getAttribute("tms_wowmomentdate");
-
-    var email = emailAttr.getValue();
-    var occasion = occasionAttr.getValue();   // number (option set value)
-    var wowMomentDate = dateAttr.getValue();  // JS Date
-
-    if (!email || occasion === null || !wowMomentDate) {
-        return; // let required-field rules handle blanks
-    }
-
-    // On update, skip if none of the key fields changed
-    var isUpdate = formContext.ui.getFormType() === 2;
-    if (isUpdate && !emailAttr.getIsDirty() && !occasionAttr.getIsDirty() && !dateAttr.getIsDirty()) {
-        return;
-    }
-
-    // Cancel this save NOW (must be synchronous)
-    eventArgs.preventDefault();
-    var saveMode = eventArgs.getSaveMode();
-
-    var currentRecordId = formContext.data.entity.getId().replace(/[{}]/g, "").toLowerCase();
-    var safeEmail = email.trim().toLowerCase().replace(/'/g, "''");
-
-    // Treat the on-screen components as UTC, so no shift happens
-    var y = wowMomentDate.getFullYear();
-    var m = wowMomentDate.getMonth();
-    var d = wowMomentDate.getDate();
-    var start, end;
-
-    if (TMS_MATCH_WHOLE_DAY) {
-        start = new Date(Date.UTC(y, m, d, 0, 0, 0));
-        end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-    } else {
-        start = new Date(Date.UTC(y, m, d, wowMomentDate.getHours(), wowMomentDate.getMinutes(), 0));
-        end = new Date(start.getTime() + 60 * 1000);
-    }
-
-    var query =
-        "?$select=tms_wowmomentid" +
-        "&$top=1" +
-        "&$filter=tms_emailaddress eq '" + safeEmail + "'" +
-        " and tms_occasion eq " + occasion +
-        " and tms_wowmomentdate ge " + tmsToLiteral(start) +
-        " and tms_wowmomentdate lt " + tmsToLiteral(end) +
-        " and statecode eq 0";
-
-    if (currentRecordId) {
-        query += " and tms_wowmomentid ne " + currentRecordId;
-    }
-
-    Xrm.WebApi.retrieveMultipleRecords("tms_wowmoment", query).then(
-        function success(result) {
-            if (result.entities.length > 0) {
-                formContext.ui.setFormNotification(
-                    "A Wow Moment record already exists with the same Email Address, Occasion and Wow Moment Date.",
-                    "ERROR",
-                    "duplicateWowMoment"
-                );
-                Xrm.Navigation.openAlertDialog({
-                    title: "Duplicate Record",
-                    text: "A Wow Moment record with the same Email Address, Occasion and Wow Moment Date already exists. The record was not saved."
-                });
-            } else {
-                formContext.ui.clearFormNotification("duplicateWowMoment");
-                _tmsWowBypass = true;
-
-                if (saveMode === 2) {
-                    formContext.data.save({ saveMode: "saveandclose" });
-                } else if (saveMode === 59) {
-                    formContext.data.save({ saveMode: "saveandnew" });
-                } else {
-                    formContext.data.save();
-                }
-            }
-        },
-        function error(err) {
-            Xrm.Navigation.openErrorDialog({ message: "Duplicate check failed: " + err.message });
-        }
-    );
-}
 
 // Web API 5 - Shop Count Validation for Future Events
 function validateShopFutureEvents(executionContext)
@@ -386,92 +275,151 @@ function validateShopFutureEvents(executionContext)
     );
 }
 
-// Web API 6 - Validate Duplicate Email Addresses with Active or Approved Wow Moment Records
-var _tmsApprovedEmailBypass = false;
-
-// Option set value for "Approved" in Management Approval (verify yours,
-// custom option sets usually start at 100000000)
+// Web API 6 and 4B 
+var _tmsWowBypass = false;
+var _tmsWowRunning = false;
+ 
+var TMS_MATCH_WHOLE_DAY = false;               // false = same date and time (to the minute)
+var TMS_EMAIL_ANY_ACTIVE_OR_APPROVED = false;  // false = approved records only
 var TMS_APPROVED_VALUE = 2;
-
-// false = block if another APPROVED record has this email
-// true  = block if another ACTIVE or APPROVED record has this email
-var TMS_EMAIL_ANY_ACTIVE_OR_APPROVED = false;
-
-function validateDuplicateApprovedEmail(executionContext) {
-
-    if (_tmsApprovedEmailBypass) {
-        _tmsApprovedEmailBypass = false;
-        return;
-    }
-
-    var formContext = executionContext.getFormContext();
+ 
+function tmsPad(n) { return ("0" + n).slice(-2); }
+ 
+function tmsToLiteral(d) {
+    return d.getUTCFullYear() + "-" + tmsPad(d.getUTCMonth() + 1) + "-" +
+           tmsPad(d.getUTCDate()) + "T" + tmsPad(d.getUTCHours()) + ":" +
+           tmsPad(d.getUTCMinutes()) + ":" + tmsPad(d.getUTCSeconds()) + "Z";
+}
+ 
+function validateWowMomentOnSave(executionContext) {
     var eventArgs = executionContext.getEventArgs();
-
-    var emailAttr = formContext.getAttribute("tms_emailaddress");
-    var approvalAttr = formContext.getAttribute("tms_managementapproval");
-
-    var email = emailAttr.getValue();
-
-    if (!email) {
-        return;
-    }
-
-    // On update, skip if neither field changed
-    var isUpdate = formContext.ui.getFormType() === 2;
-    if (isUpdate && !emailAttr.getIsDirty() && !approvalAttr.getIsDirty()) {
-        return;
-    }
-
-    // Cancel this save now (must be synchronous)
-    eventArgs.preventDefault();
     var saveMode = eventArgs.getSaveMode();
-
-    var currentRecordId = formContext.data.entity.getId().replace(/[{}]/g, "").toLowerCase();
+ 
+    // Autosave: cancel quietly, never run the check
+    if (saveMode === 70) {
+        eventArgs.preventDefault();
+        return;
+    }
+ 
+    // Our own re-save: let it through
+    if (_tmsWowBypass) {
+        _tmsWowBypass = false;
+        return;
+    }
+ 
+    // A check is already running: block extra saves until it finishes
+    if (_tmsWowRunning) {
+        eventArgs.preventDefault();
+        return;
+    }
+ 
+    var formContext = executionContext.getFormContext();
+ 
+    var emailAttr = formContext.getAttribute("tms_emailaddress");
+    var occasionAttr = formContext.getAttribute("tms_occasion");
+    var dateAttr = formContext.getAttribute("tms_wowmomentdate");
+    var approvalAttr = formContext.getAttribute("tms_managementapproval");
+ 
+    var email = emailAttr ? emailAttr.getValue() : null;
+    var occasion = occasionAttr ? occasionAttr.getValue() : null;
+    var wowMomentDate = dateAttr ? dateAttr.getValue() : null;
+ 
+    if (!email) { return; }
+ 
+    var isUpdate = formContext.ui.getFormType() === 2;
+    if (isUpdate &&
+        !emailAttr.getIsDirty() && !occasionAttr.getIsDirty() &&
+        !dateAttr.getIsDirty() && !(approvalAttr && approvalAttr.getIsDirty())) {
+        return;
+    }
+ 
+    // Cancel this save now; it is re-triggered below if there is no duplicate
+    eventArgs.preventDefault();
+    _tmsWowRunning = true;
+ 
+    var currentId = formContext.data.entity.getId().replace(/[{}]/g, "").toLowerCase();
     var safeEmail = email.trim().toLowerCase().replace(/'/g, "''");
-
+    var notSelf = currentId ? " and tms_wowmomentid ne " + currentId : "";
+    var checks = [];
+ 
+    // Rule 1: same Email + Occasion + Wow Moment Date
+    if (occasion !== null && wowMomentDate) {
+        var y = wowMomentDate.getFullYear();
+        var m = wowMomentDate.getMonth();
+        var d = wowMomentDate.getDate();
+        var start, end;
+ 
+        if (TMS_MATCH_WHOLE_DAY) {
+            start = new Date(Date.UTC(y, m, d, 0, 0, 0));
+            end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+        } else {
+            start = new Date(Date.UTC(y, m, d, wowMomentDate.getHours(), wowMomentDate.getMinutes(), 0));
+            end = new Date(start.getTime() + 60 * 1000);
+        }
+ 
+        var q1 = "?$select=tms_wowmomentid&$top=1" +
+            "&$filter=tms_emailaddress eq '" + safeEmail + "'" +
+            " and tms_occasion eq " + occasion +
+            " and tms_wowmomentdate ge " + tmsToLiteral(start) +
+            " and tms_wowmomentdate lt " + tmsToLiteral(end) +
+            " and statecode eq 0" + notSelf;
+ 
+        checks.push({
+            promise: Xrm.WebApi.retrieveMultipleRecords("tms_wowmoment", q1),
+            message: "A Wow Moment record already exists with the same Email Address, Occasion and Wow Moment Date."
+        });
+    }
+ 
+    // Rule 2: another approved (or active) record with the same Email
     var statusFilter = TMS_EMAIL_ANY_ACTIVE_OR_APPROVED
         ? " and (statecode eq 0 or tms_managementapproval eq " + TMS_APPROVED_VALUE + ")"
         : " and tms_managementapproval eq " + TMS_APPROVED_VALUE;
-
-    var query =
-        "?$select=tms_wowmomentid" +
-        "&$top=1" +
-        "&$filter=tms_emailaddress eq '" + safeEmail + "'" +
-        statusFilter;
-
-    if (currentRecordId) {
-        query += " and tms_wowmomentid ne " + currentRecordId;
-    }
-
-    Xrm.WebApi.retrieveMultipleRecords("tms_wowmoment", query).then(
-        function success(result) {
-            if (result.entities.length > 0) {
-                var msg = TMS_EMAIL_ANY_ACTIVE_OR_APPROVED
-                    ? "Another active or approved Wow Moment record already exists with this Email Address."
-                    : "An approved Wow Moment record already exists with this Email Address.";
-
-                formContext.ui.setFormNotification(msg, "ERROR", "duplicateApprovedEmail");
+ 
+    var q2 = "?$select=tms_wowmomentid&$top=1" +
+        "&$filter=tms_emailaddress eq '" + safeEmail + "'" + statusFilter + notSelf;
+ 
+    checks.push({
+        promise: Xrm.WebApi.retrieveMultipleRecords("tms_wowmoment", q2),
+        message: TMS_EMAIL_ANY_ACTIVE_OR_APPROVED
+            ? "Another active or approved Wow Moment record already exists with this Email Address."
+            : "An approved Wow Moment record already exists with this Email Address."
+    });
+ 
+    Promise.all(checks.map(function (c) { return c.promise; })).then(
+        function (results) {
+            _tmsWowRunning = false;
+            var errors = [];
+            for (var i = 0; i < results.length; i++) {
+                if (results[i].entities.length > 0) { errors.push(checks[i].message); }
+            }
+ 
+            if (errors.length > 0) {
+                formContext.ui.setFormNotification(errors.join(" "), "ERROR", "tmsWowValidation");
                 Xrm.Navigation.openAlertDialog({
-                    title: "Duplicate Email Address",
-                    text: msg + " The record was not saved."
+                    title: "Duplicate Record",
+                    text: errors.join("\n\n") + "\n\nThe record was not saved."
                 });
             } else {
-                formContext.ui.clearFormNotification("duplicateApprovedEmail");
-                _tmsApprovedEmailBypass = true;
-
-                if (saveMode === 2) {
-                    formContext.data.save({ saveMode: "saveandclose" });
-                } else if (saveMode === 59) {
-                    formContext.data.save({ saveMode: "saveandnew" });
-                } else {
-                    formContext.data.save();
+                formContext.ui.clearFormNotification("tmsWowValidation");
+                _tmsWowBypass = true;
+ 
+                var p;
+                if (saveMode === 2) { p = formContext.data.save({ saveMode: "saveandclose" }); }
+                else if (saveMode === 59) { p = formContext.data.save({ saveMode: "saveandnew" }); }
+                else { p = formContext.data.save(); }
+ 
+                if (p && p.then) {
+                    p.then(function () { }, function (e) {
+                        _tmsWowBypass = false;
+                        console.log("Save failed:", e && e.message);
+                    });
                 }
             }
         },
-        function (error) {
-            Xrm.Navigation.openErrorDialog({
-                message: "Approved Email Validation Failed: " + error.message
-            });
+        function (err) {
+            _tmsWowRunning = false;
+            Xrm.Navigation.openErrorDialog({ message: "Validation failed: " + err.message });
         }
     );
 }
+ 
