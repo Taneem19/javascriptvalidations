@@ -37,6 +37,24 @@ Dataverse Web API operations for Wow Moment forms:
   20 or more active future events.
 - `validateDuplicateApprovedEmail` checks for another record with the same
   email and the configured approval status.
+- `validateWowMomentOnSave` checks for duplicate email/occasion/date-time
+  records and duplicate approved-email records before saving. Its settings
+  control whole-day versus same-minute matching and whether email uniqueness
+  applies to approved records only or active/approved records. Autosave is
+  canceled by this handler.
+
+### `tms_wowmoment_ribbon.js`
+
+Ribbon command logic for Wow Moment records, exposed through `TMS.WowRibbon`:
+
+- `canInitiate`, `canApprove`, and `canReject` control command availability.
+- `initiate`, `approve`, and `reject` update Management Approval and record
+  the acting user's name and timestamp in the Details JSON field.
+- `refreshRibbon` can be registered on field On Change events to update
+  command availability.
+
+Approval and rejection commands are available only to users with the
+configured `Event Approver` and `Event Rejection` security roles, respectively.
 
 ### `tms_ShopWebAPIs.js`
 
@@ -63,9 +81,16 @@ Feedback form rules:
    parameter**).
 4. Register save validations on the form's On Save event and field-dependent
    behaviors on the relevant On Load or On Change events. Register lookup
-   filtering on form load.
+   filtering on form load. Register `validateWowMomentOnSave` on the Wow
+   Moment form's On Save event; this handler cancels autosave.
 5. Confirm the logical names used in the scripts match the table and column
    names in the target environment.
+6. To configure Wow Moment ribbon commands, add `tms_wowmoment_ribbon.js` to
+   the form libraries and bind command actions and enable rules to the
+   corresponding `TMS.WowRibbon` functions. Register `refreshRibbon` on
+   relevant field On Change events so command availability updates as values
+   change. Confirm the configured security role names and status option values
+   match the target environment.
 
 The scripts assume the Dataverse client APIs (`Xrm.WebApi`, `Xrm.Navigation`,
 and model-driven form context) are available. They are not standalone browser
@@ -76,6 +101,8 @@ scripts.
 Review option-set values before deploying:
 
 - `TMS_APPROVED_VALUE` in `tms_WowMomentWebApis.js` is set to `2`.
+- The Management Approval values in `tms_wowmoment_ribbon.js` are set to
+  Initiated `1`, Approved `2`, and Rejected `3`.
 - `TMS_EMAIL_ANY_ACTIVE_OR_APPROVED` controls whether the duplicate-email
   check applies to approved records only (`false`) or active or approved
   records (`true`).
